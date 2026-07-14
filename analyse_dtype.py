@@ -12,6 +12,15 @@ Usage examples
 
 # Single plotfile (no videos):
     python analyse_dtype.py run.toml /path/to/sims/ --snapshot DType0000100 --maps x_HI temperature --radius
+
+# From the dtype_front_radii.csv the test problem writes directly, with no plotfiles
+# required (e.g. to re-check the radius solution after a verification-code change,
+# without re-running with plotfile_interval turned on):
+    python analyse_dtype.py run.toml /path/to/sims/ --from-csv --eff-radius --eff-radius-error
+
+# Same, comparing against the Krumholz & Matzner (2009) radiation-pressure solution
+# instead of the pure Spitzer solution (requires a CSV written by DTypeFrontRadPres):
+    python analyse_dtype.py run.toml /path/to/sims/ --from-csv --radiation-pressure --eff-radius-error
 """
 
 import argparse
@@ -29,11 +38,29 @@ def load_toml(path):
         return tomllib.load(f)
 
 
-def build_analytical(cfg):
+def build_analytical(cfg, radiation_pressure=False):
     from IFrontAnalysis import DTypeAnalytical
     Q   = cfg["stromgen"]["Q"]
     n_H = cfg["stromgen"]["primary_species_2"]
-    return DTypeAnalytical(Q, n_H)
+    radpres_cfg = cfg.get("radpres", {})
+    return DTypeAnalytical(
+        Q, n_H,
+        radiation_pressure=radiation_pressure,
+        f_trap=radpres_cfg.get("f_trap", 1.0),
+        psi=radpres_cfg.get("psi", 1.0),
+        mu_amb=radpres_cfg.get("mu_amb", 1.4),
+    )
+
+
+def get_dx_pc(cfg):
+    """Smallest cell size in pc, from geometry.prob_lo/prob_hi and amr.n_cell (assumes
+    the finest level equals the base grid, i.e. max_level = 0)."""
+    from astropy import units as u
+    prob_lo = cfg["geometry"]["prob_lo"]
+    prob_hi = cfg["geometry"]["prob_hi"]
+    n_cell  = cfg["amr"]["n_cell"]
+    dx_cm = min((hi - lo) / n for lo, hi, n in zip(prob_lo, prob_hi, n_cell))
+    return (dx_cm * u.cm).to(u.pc).value
 
 
 def parse_args():
@@ -43,13 +70,29 @@ def parse_args():
         epilog=__doc__,
     )
     p.add_argument("toml",   help="Path to the Quokka input TOML file")
-    p.add_argument("simdir", help="Directory containing the plotfiles")
+    p.add_argument("simdir", help="Directory containing the plotfiles (or, with --from-csv, "
+                                  "the directory containing dtype_front_radii.csv)")
 
     # -- scope --
     scope = p.add_mutually_exclusive_group()
     scope.add_argument(
         "--snapshot", metavar="PLOTFILE",
         help="Analyse a single named plotfile only (no videos produced)",
+    )
+    scope.add_argument(
+        "--from-csv", nargs="?", const="dtype_front_radii.csv", default=None, metavar="CSV",
+        help="Read r_effective/r_spitzer[/r_radpres] directly from the CSV the test problem "
+             "writes (default filename: dtype_front_radii.csv, resolved relative to simdir "
+             "unless an absolute/relative path is given) instead of computing them from "
+             "plotfiles. No plotfiles are required. Only --eff-radius, --eff-radius-error, "
+             "and --norm-radius apply in this mode (maps/videos/--radius need plotfiles).",
+    )
+
+    p.add_argument(
+        "--radiation-pressure", action="store_true",
+        help="Compare against the Krumholz & Matzner (2009) radiation-pressure solution "
+             "(the r_radpres CSV column, or DTypeAnalytical's radiation-pressure mode) "
+             "instead of the pure Spitzer gas-pressure solution.",
     )
 
     # -- what to make --
@@ -110,6 +153,13 @@ def parse_args():
                                   args.norm_radius]):
         p.error("Nothing to do — specify --all or at least one of "
                 "--maps / --videos / --radius / --eff-radius / --eff-radius-error / --norm-radius")
+
+    if args.from_csv is not None:
+        unsupported = args.all or args.maps or args.videos or args.radius
+        if unsupported:
+            p.error("--from-csv only supports --eff-radius / --eff-radius-error / --norm-radius "
+                    "(maps, videos, and --radius require plotfiles)")
+
     return args
 
 
@@ -123,7 +173,7 @@ def main():
 
     prefix  = cfg.get("plotfile_prefix", "plt")
     outdir  = args.outdir or os.path.join(args.simdir, "Plots")
-    analytical = build_analytical(cfg)
+    analytical = build_analytical(cfg, radiation_pressure=args.radiation_pressure)
 
     map_kwargs = dict(
         plot_analytical=args.plot_analytical,
@@ -135,6 +185,46 @@ def main():
         nolog=args.nolog,
         redo=args.redo,
     )
+
+    # ── CSV mode (no plotfiles required) ─────────────────────────────────────
+    if args.from_csv is not None:
+        import matplotlib.pyplot as pl
+        from IFrontAnalysis import IonizationFrontFromCSV
+
+        csv_path = (args.from_csv if os.path.isabs(args.from_csv) or os.path.exists(args.from_csv)
+                    else os.path.join(args.simdir, args.from_csv))
+        if not os.path.isfile(csv_path):
+            sys.exit(f"Error: CSV not found: {csv_path}")
+
+        os.makedirs(outdir, exist_ok=True)
+        dx_pc = get_dx_pc(cfg)
+        sim = IonizationFrontFromCSV(
+            csv_path, dx_pc, analytical=analytical, use_radpres=args.radiation_pressure,
+        )
+
+        def savefig(fig, filename):
+            fig.tight_layout()
+            for ext in ("png", "pdf"):
+                path = os.path.join(outdir, filename.rsplit(".", 1)[0] + f".{ext}")
+                fig.savefig(path, dpi=150)
+                print(f"Saved: {path}")
+            pl.close(fig)
+
+        if args.eff_radius:
+            fig, ax = sim.plot_effective_radius_history(plot_analytical=True)
+            ax.set_title("Effective radius history")
+            savefig(fig, "eff_radius_history.png")
+
+        if args.eff_radius_error:
+            fig, ax = sim.plot_effective_radius_error_history()
+            ax.set_title(r"Effective radius error $\Delta r / \Delta x$")
+            savefig(fig, "eff_radius_error.png")
+
+        if args.norm_radius:
+            fig, ax = sim.plot_normalized_effective_radius_history()
+            ax.set_title("Normalised effective radius")
+            savefig(fig, "norm_radius_history.png")
+        return
 
     # ── single-snapshot mode ──────────────────────────────────────────────────
     if args.snapshot:
