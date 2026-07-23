@@ -104,20 +104,23 @@ def parse_args():
     p.add_argument(
         "--maps", nargs="+", metavar="FIELD",
         choices=["x_HI", "temperature", "n_e", "n_HI", "n_HII",
-                 "n_photon", "gasDensity", "velocity", "cs", "pressure",
+                 "n_photon", "gasDensity", "velocity", "v_x", "v_y", "v_z", "cs", "pressure",
                  "E_IR", "E_optical", "E_ion"],
-        help="Field maps to create (slice plots). E_IR/E_optical/E_ion (radiation "
-             "energy density of the IR/optical/ionizing bands) require a "
-             "multi-group plotfile (e.g. DTypeFrontMG) and are not included by --all.",
+        help="Field maps to create (slice plots). v_x/v_y/v_z are the signed "
+             "velocity components (plotted with a symlog colorbar) and are not "
+             "included by --all. E_IR/E_optical/E_ion (radiation energy density "
+             "of the IR/optical/ionizing bands) require a multi-group plotfile "
+             "(e.g. DTypeFrontMG) and are not included by --all.",
     )
     p.add_argument(
         "--videos", nargs="+", metavar="FIELD",
         choices=["x_HI", "temperature", "n_e", "n_HI", "n_HII",
-                 "n_photon", "gasDensity", "velocity", "cs", "pressure",
+                 "n_photon", "gasDensity", "velocity", "v_x", "v_y", "v_z", "cs", "pressure",
                  "E_IR", "E_optical", "E_ion"],
         help="Fields to animate as videos (ignored with --snapshot). "
-             "E_IR/E_optical/E_ion require a multi-group plotfile and are not "
-             "included by --all.",
+             "v_x/v_y/v_z are the signed velocity components and are not "
+             "included by --all. E_IR/E_optical/E_ion require a multi-group "
+             "plotfile and are not included by --all.",
     )
     p.add_argument("--radius",     action="store_true", help="Plot front radius history")
     p.add_argument("--eff-radius", action="store_true", help="Plot effective radius history")
