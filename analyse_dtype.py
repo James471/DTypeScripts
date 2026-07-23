@@ -157,6 +157,10 @@ def parse_args():
     p.add_argument("--end", type=int, default=None,
                    help="Stop at plotfile number N (inclusive)")
     p.add_argument("--fps", type=int, default=10, help="Video frame rate (default: 10)")
+    p.add_argument("--pdf", action="store_true",
+                   help="Also write each field map as a PDF alongside the PNG. Off by "
+                        "default because PDFs roughly double the render time and are "
+                        "unused for the videos assembled from the PNG frames.")
 
     args = p.parse_args()
 
@@ -276,6 +280,7 @@ def main():
         ending_number=args.end,
         step=args.step,
         analytical=analytical,
+        save_pdf=args.pdf,
     )
 
     fields_maps   = _ALL_FIELDS if args.all else (args.maps   or [])
